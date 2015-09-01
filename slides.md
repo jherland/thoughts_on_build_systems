@@ -310,33 +310,52 @@ layout: true
 ### Properties of _bad_ build systems
 ---
 
-- Works on _that_ machine, but not on my machine
-    - Different:
-        - compilers?
-        - compiler versions?
-        - tools? versions?
-        - hosts
-        - users
-        - distros
-        - environments
-        - locales
-        - networks
+Succeeds on machine _X_, but fails on machine _Y_ &mdash; _WHY?_
 
-- Always build release builds from clean
-    - Cannot trust incremental builds
-    - Fast or correct, choose one!
+--
 
-- Slow
-    - Unnecessary rebuilds
-    - Lack of parallellization
+- Possible reasons:
+    - Compiler/tool installed on _X_, but not on _Y_
+    - Wrong compiler/tool version
+    - Depends on a specific OS/distro
+    - Depends on specific environment variable(s)
+    - Hardcoded user paths: `/home/johndoe/src/main/foo/bar`
+    - NFS mount or shared network drive
+    - Connectivity to external servers
+        - within office/site?
+        - within company?
+        - 3rd-party site!?
+--
+- Some of these are known/intentional
+    - i.e. fix machine _Y_ - not a build process bug
+- However, often most of these are (unknown) bugs
+    - just waiting newbies to stumble upon
+- Hidden/unknown deps make it harder to setup a machine for building
+- External deps are sometimes necessary, but _try_ to reduce/eliminate
 
-- Depends on externals
-    - What are externals?
-        - Other directories
-        - Other machines
-            - NFS mounts?
-            - Git servers?
-        - Other networks/companies
+---
+
+Succeeds on machine _X_, but fails on machine _Y_
+
+Succeeds on both _X_ and _Y_, but the build results from _Y_ don't work properly!
+- Worse!
+
+--
+
+Always build release builds from clean
+- Cannot trust incremental builds
+- Fast _or_ correct, choose one! &#9785;
+
+--
+
+Slow!
+- Unnecessary rebuilds
+- Lack of parallellization
+
+--
+
+Obtuse
+- Build failures are hard to diagnose and debug
 
 ---
 layout: false
@@ -351,27 +370,47 @@ layout: true
 ### Properties of _good_ build systems
 ---
 
-- Correct!
-    - Incremental builds are correct
-    - Builds correctly everywhere (different hosts/distros/OSes)
+Correct!
+- Incremental builds can be trusted
+- If build succeeds on two machines, then the build results are
+  (bug-for-bug) _equivalent_ (hopefully even _identical_).
 
-- Fast!
-    - No unnecessary rebuilds:
-        - Only rebuild the smallest thing needed
-            - Rebuild a single source file, and then re-link executable,
-                instead of rebuilding all of the source files that make up
-                the executable.
-            - _Non_-example: system-trunk-os builds 3rd-party components by
-                unpacking their source trees and running their build
-                processes. But it cannot trust each component's build system
-                to do incremental builds correctly (many don't), so each
-                component always builds from scratch. This makes for few and
-                large/coarse-grained build steps. Result: changing a single
-                file in Android (one 3rd-party component) causes OS to
-                trigger a full rebuild of _all_ of Android.
-    - No waiting around
-    - Parallel (when possible)
+---
 
+Correct!
+
+Fast!
+- No unnecessary rebuilds
+- Rebuild only the smallest thing needed
+    - Requires _fine-grained_ build steps
+    - Not always possible, e.g. rebuilding Android in `system-trunk-os`
+- No unnecessary sleeping or waiting around
+- Parallel (when possible)
+- Distributed? (exploit parallellism across hosts)
+
+---
+
+Correct!
+
+Fast!
+
+Flexible/portable
+- Works across distros/OSes
+- Builds correctly everywhere
+
+---
+
+Correct!
+
+Fast!
+
+Flexible/portable
+
+Helpful
+- When build fails, it's easy to find out why.
+- External resources are checked for _explicitly_
+    - e.g. a separate build step that precedes the build steps that use the
+      external resource
 
 ---
 layout: false
@@ -386,29 +425,132 @@ layout: true
 ### The core of a good build system
 ---
 
-- Aside: Functional programming:
-    - Composing functions
-    - Pure functions
-        - has no side effects
-        - can be memoized
-        - can be safely parallellized
+## Digression: Functional programming:
+
+- Pure functions
+    - All inputs are passed in the function _call_
+        - No external state
+    - All outputs are passed in the function _return_
+        - Again: no external state
+    - No side effects!
+    - Can be memoized (i.e. cache output keyed on inputs)
+    - Can be easily and safely parallellized
+- Composing functions
+    - use one function's output as input to another function
+- Let's apply this to our build steps!
+
+---
+
+## _Pure_ build steps
 
 - No side-effects!
-    - Enables safe parallellization
-    - Out-of-tree builds
-    - DO NOT rewrite your inputs. Create new files instead...
+    - All files read (or executed) are declared as inputs
+    - All files written are declared as outputs
+- Enables safe parallellization of build steps
+    - i.e. parallellization _within_ build targets
+- Do _not_ rewrite your inputs. Create new files instead...
+    - Inputs and outputs are disjoint
+- Enable out-of-tree builds
+    - Build several targets simultaneously from a single source tree
+    - i.e. parallellization _across_ build targets
+- Can be cached:
+    - Checksum across the input maps to the generated outputs
+    - Never build the same thing _twice_!
 
-- Cross-compiling, toolchains
-    - Control your tools!
-    - Cross-compiling is the norm!?
+---
 
-- Idempotence to the extreme:
-    - Same input yields same output. ALWAYS!
-    - Did you catch ALL the inputs?
-    - Dealing with randomess
-        - Two kinds of randomness:
-            - Arbitrary changes: ELIMINATE THEM!
-            - True/real/necessary reandomness: COMPARTMENTALIZE!
+## Control your tools
+
+- Fairly easy with cross-compilers
+    - Often isolated to a single directory
+    - Seldom _upgraded_, instead _replaced_ with a different cross-compiler
+- Try to approach _native_ compilers the same way
+    - Make sure a compiler upgrade is auto-discovered and triggers rebuilds
+      appropriately
+    - Consider doing a checksum of the compiler executable that is verified at
+      the start of the build
+- The same really applies to all other tools used in the build process
+- Consider providing the tools as separate build steps
+    - Enable the build process to _automatically_ establish its own environment
+    - Homogenic tool set
+    - Easy to setup a new build machine
+- Alternative approach:
+    - Provide Docker image with external dependencies installed.
+
+---
+
+## Digression: Deterministic builds
+
+- Reflections on Trusting Trust (by Ken Thompson)
+    - https://www.ece.cmu.edu/~ganger/712.fall02/papers/p761-thompson.pdf
+- How can you trust your compiler?
+- Solution: Crowdsourcing
+- Build on different hosts all over the world.
+- If all the build outputs are _identical_, the compiler backdoor exists
+  either in _all_ of them (unlikely), or in _none_ of them (likely).
+- BUT: Requires a deterministic build process
+- Gitian (used by TOR, Bitcoin)
+    - http://gitian.org/
+
+---
+
+## Taking things to the extreme
+
+- Make build process deterministic (as far as possible)
+    - Same input yields same output. _ALWAYS!_
+    - Dealing with randomess/nondeterminism &mdash; there are two kinds:
+        - Arbitrary changes: _ELIMINATE THEM!_
+        - True/real/necessary randomness: _COMPARTMENTALIZE!_
+
+---
+
+## Taking things to the extreme (cont.)
+
+- Make build process deterministic (as far as possible)
+- Distributed build cache
+    - Think `distcc` + `ccache`, but for any build step (not just compilation)
+    - "If any of my colleagues built it, I should never have to rebuild it!"
+
+---
+
+## Taking things to the extreme (cont.)
+
+- Make build process deterministic (as far as possible)
+- Distributed build cache
+- Monitor build steps to automatically deduce inputs/dependencies and outputs
+
+---
+
+## Taking things to the extreme (cont.)
+
+- Make build process deterministic (as far as possible)
+- Distributed build cache
+- Monitor build steps to automatically deduce inputs/dependencies and outputs
+- Continuous build process
+    - A build daemon that watches your source tree and automatically triggers
+      rebuild when any file is changed.
+    - e.g. Watchman from Facebook: https://github.com/facebook/watchman
+
+---
+
+## Taking things to the extreme (cont.)
+
+- Make build process deterministic (as far as possible)
+- Distributed build cache
+- Monitor build steps to automatically deduce inputs/dependencies and outputs
+- Continuous build process
+- Flip the arrows!
+    - Constructing the entire dependency graph is necessary, but expensive
+    - However, let's assume you can correctly detect when a build step might
+      have changed (and then update the dep graph accordingly)
+    - Now, cache the dep graph, but in an alternate/reversed form where inputs
+      are mapped (through build steps) to outputs.
+    - If input _X_ changes, lookup in this reverse map to find which build
+      steps trigger. Repeatedly lookup their (updated) outputs to find further
+      build steps to trigger, until the final targets have been rebuilt.
+    - Inspiration and further reading:
+        - Tup: http://gittup.org/tup/
+        - Build System Rules and Algorithms: http://gittup.org/tup/build_system_rules_and_algorithms.pdf
 
 ---
 layout: false
@@ -423,23 +565,67 @@ layout: true
 ### Techniques for improving build systems
 ---
 
-Techniques for examining/debugging/improving build systems:
-
-- `strace`
-    - on the whole thing?
-    - on individual steps?
-
-- tweak the FS
-    - Read-only source tree
-    - chroot/container to limit access to host tools
+Some tips & tricks I think may be helpful when examining, debugging, and
+improving build systems and build processes:
 
 - `diff`
     - build logs
         - hard when parallellism is involved.
-        - hard when 
+        - hard when build logs contain extra cruft (e.g. timestamps)
     - build results
 
+---
+
+Some tips & tricks I think may be helpful when examining, debugging, and
+improving build systems and build processes:
+
+- `diff`
+- Tweak the filesystem
+    - Make the source tree _read-only_ to see if build is _truly_ out-of-tree.
+    - Run build process within a `chroot`/container to precisely control which
+      tools are accessible to the build process (e.g. limit access to host
+      tools or headers)
+
+---
+
+Some tips & tricks I think may be helpful when examining, debugging, and
+improving build systems and build processes:
+
+- `diff`
+- Tweak the filesystem
+- `strace`
+    - on the whole thing? probably not...
+    - on individual steps, to help hunt down hidden dependencies
+    - which brings me to...
+
+---
+
+Some tips & tricks I think may be helpful when examining, debugging, and
+improving build systems and build processes:
+
+- `diff`
+- Tweak the filesystem
+- `strace`
 - `depfinder.py`
+    - runs strace on an arbitrary command and reports paths accessed by it
+      (and its subprocesses)
+    - Future work: Integrate into a build system to automatically flag missing
+      dependencies.
+    - Further into the future: Extend into a build system that automatically
+      discovers/updates dependencies of each build step?
+    - https://github.com/jherland/depfinder
+
+---
+
+Some tips & tricks I think may be helpful when examining, debugging, and
+improving build systems and build processes:
+
+- `diff`
+- Tweak the filesystem
+- `strace`
+- `depfinder.py`
+
+What are your favorite tricks for debugging build problems?
 
 ---
 layout: false
@@ -454,7 +640,17 @@ layout: true
 ### Conclusions
 ---
 
-- Invest time
+- Build processes that are slow and untrustworthy can be fixed!
+
+- Work towards _pure_ build steps that are self-contained and without
+  side-effects.
+
+- Finding _all_ the dependencies might not be immediately obvious.
+
+- There are tools and tricks to help you along.
+
+- Putting some time into understanding and fixing it is a good investment, both
+  for you and your colleagues
 
 ---
 layout: false
@@ -467,6 +663,6 @@ class: center, middle, inverse
 
 # Thank you!
 
-## Johan Herland &lt;<a href="mailto:jherland@cisco.com">jherland@cisco.com</a>&gt;
+## Johan Herland < <jherland@cisco.com> >
 
 Slideshow created with [remark](http://gnab.github.com/remark).
